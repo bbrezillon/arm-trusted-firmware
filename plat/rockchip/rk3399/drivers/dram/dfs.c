@@ -55,6 +55,7 @@ static struct rk3399_dram_status rk3399_dram_status;
 static struct rk3399_saved_status rk3399_suspend_status;
 static uint32_t wrdqs_delay_val[2][2][4];
 static uint32_t rddqs_delay_ps;
+static uint32_t set_rate_in_progress;
 
 static struct rk3399_sdram_default_config ddr3_default_config = {
 	.bl = 8,
@@ -1963,7 +1964,8 @@ uint32_t dram_set_odt_pd(uint32_t arg0, uint32_t arg1, uint32_t arg2)
 	return 0;
 }
 
-static void m0_configure_ddr(struct pll_div pll_div, uint32_t ddr_index)
+static void m0_configure_ddr(struct pll_div pll_div, uint32_t ddr_index,
+			     uint32_t flags)
 {
 	mmio_write_32(M0_PARAM_ADDR + PARAM_DPLL_CON0, FBDIV(pll_div.fbdiv));
 	mmio_write_32(M0_PARAM_ADDR + PARAM_DPLL_CON1,
@@ -1972,7 +1974,7 @@ static void m0_configure_ddr(struct pll_div pll_div, uint32_t ddr_index)
 
 	mmio_write_32(M0_PARAM_ADDR + PARAM_DRAM_FREQ, pll_div.mhz);
 
-	mmio_write_32(M0_PARAM_ADDR + PARAM_FREQ_SELECT, ddr_index << 4);
+	mmio_write_32(M0_PARAM_ADDR + PARAM_FREQ_SELECT, (ddr_index << 4) | flags);
 	dmbst();
 	m0_configure_execute_addr(M0_BINCODE_BASE);
 }
@@ -2011,41 +2013,67 @@ static uint32_t prepare_ddr_timing(uint32_t mhz)
 	return index;
 }
 
-uint32_t ddr_set_rate(uint32_t hz)
+static void ddr_set_rate_done(void)
 {
-	uint32_t low_power, index, ddr_index;
-	uint32_t mhz = hz / (1000 * 1000);
+	uint32_t low_power;
 
-	if (mhz ==
-	    rk3399_dram_status.index_freq[rk3399_dram_status.current_index])
-		return mhz;
-
-	index = to_get_clk_index(mhz);
-	mhz = dpll_rates_table[index].mhz;
-
-	ddr_index = prepare_ddr_timing(mhz);
-	gen_rk3399_enable_training(rk3399_dram_status.timing_config.ch_cnt,
-				   mhz);
-	if (ddr_index > 1)
-		goto out;
-
-	/*
-	 * Make sure the clock is enabled. The M0 clocks should be on all of the
-	 * time during S0.
-	 */
-	m0_configure_ddr(dpll_rates_table[index], ddr_index);
-	m0_start();
-	m0_wait_done();
 	m0_stop();
 
 	if (rk3399_dram_status.timing_config.odt == 0)
 		gen_rk3399_set_odt(0);
 
-	rk3399_dram_status.current_index = ddr_index;
 	low_power = rk3399_dram_status.low_power_stat;
 	resume_low_power(low_power);
-out:
 	gen_rk3399_disable_training(rk3399_dram_status.timing_config.ch_cnt);
+	set_rate_in_progress = 0;
+}
+
+#define DRAM_SET_RATE_F_ASYNC			0x1
+#define DRAM_SET_RATE_F_WAIT_VBLANK		0x2
+
+uint32_t ddr_set_rate(uint32_t hz, uint32_t flags)
+{
+	uint32_t index, ddr_index;
+	uint32_t mhz = hz / (1000 * 1000);
+
+	if (set_rate_in_progress) {
+		if (!m0_is_done())
+			return 0;
+
+		ddr_set_rate_done();
+	}
+
+	index = to_get_clk_index(mhz);
+	mhz = dpll_rates_table[index].mhz;
+	if (mhz ==
+	    rk3399_dram_status.index_freq[rk3399_dram_status.current_index])
+		return mhz;
+
+	ddr_index = prepare_ddr_timing(mhz);
+	gen_rk3399_enable_training(rk3399_dram_status.timing_config.ch_cnt,
+				   mhz);
+	if (ddr_index > 1) {
+		gen_rk3399_disable_training(rk3399_dram_status.timing_config.ch_cnt);
+		return mhz;
+	}
+
+	set_rate_in_progress = 1;
+	rk3399_dram_status.current_index = ddr_index;
+
+	/*
+	 * Make sure the clock is enabled. The M0 clocks should be on all of the
+	 * time during S0.
+	 */
+	m0_configure_ddr(dpll_rates_table[index], ddr_index,
+			 (flags & DRAM_SET_RATE_F_WAIT_VBLANK) ?
+			 PARAM_FREQ_WAIT_VBLANK : 0);
+	m0_start();
+
+	if (flags & DRAM_SET_RATE_F_ASYNC)
+		return mhz;
+
+	m0_wait_done();
+	ddr_set_rate_done();
 	return mhz;
 }
 
@@ -2076,7 +2104,7 @@ void ddr_prepare_for_sys_suspend(void)
 	rk3399_dram_status.low_power_stat = 0;
 	rk3399_dram_status.timing_config.odt = 1;
 	if (mhz != rk3399_dram_status.boot_freq)
-		ddr_set_rate(rk3399_dram_status.boot_freq * 1000 * 1000);
+		ddr_set_rate(rk3399_dram_status.boot_freq * 1000 * 1000, 0);
 
 	/*
 	 * This will configure the other index to be the same frequency as the
@@ -2105,7 +2133,7 @@ void ddr_prepare_for_sys_resume(void)
 	 */
 	if (rk3399_suspend_status.freq !=
 	    rk3399_dram_status.index_freq[rk3399_dram_status.current_index]) {
-		ddr_set_rate(rk3399_suspend_status.freq * 1000 * 1000);
+		ddr_set_rate(rk3399_suspend_status.freq * 1000 * 1000, 0);
 		return;
 	}
 

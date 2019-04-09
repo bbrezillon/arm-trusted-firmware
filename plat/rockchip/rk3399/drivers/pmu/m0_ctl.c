@@ -82,6 +82,12 @@ void m0_stop(void)
 		      BITS_WITH_WMASK(0xf, 0xf, 0));
 }
 
+int m0_is_done(void)
+{
+	dsb();
+	return mmio_read_32(M0_PARAM_ADDR + PARAM_M0_DONE) == M0_DONE_FLAG;
+}
+
 void m0_wait_done(void)
 {
 	do {

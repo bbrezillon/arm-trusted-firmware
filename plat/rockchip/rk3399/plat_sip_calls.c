@@ -32,7 +32,7 @@ uint32_t ddr_smc_handler(uint64_t arg0, uint64_t arg1,
 {
 	switch (id) {
 	case DRAM_SET_RATE:
-		return ddr_set_rate((uint32_t)arg0);
+		return ddr_set_rate((uint32_t)arg0, (uint32_t)arg1);
 	case DRAM_ROUND_RATE:
 		return ddr_round_rate((uint32_t)arg0);
 	case DRAM_GET_RATE:

@@ -39,7 +39,7 @@ struct drv_odt_lp_config {
 	uint32_t dram_side_ca_odt;
 };
 
-uint32_t ddr_set_rate(uint32_t hz);
+uint32_t ddr_set_rate(uint32_t hz, uint32_t flags);
 uint32_t ddr_round_rate(uint32_t hz);
 uint32_t ddr_get_rate(void);
 uint32_t dram_set_odt_pd(uint32_t arg0, uint32_t arg1, uint32_t arg2);

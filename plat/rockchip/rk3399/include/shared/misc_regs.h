@@ -14,6 +14,8 @@
 #define CRU_DPLL_CON3		0x4c
 #define CRU_DPLL_CON4		0x50
 #define CRU_DPLL_CON5		0x54
+#define CRU_CLKGATE10_CON	0x328
+#define CRU_CLKGATE28_CON	0x370
 
 /* CRU_PLL_CON3 */
 #define PLL_SLOW_MODE		0

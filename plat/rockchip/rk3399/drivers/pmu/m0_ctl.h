@@ -24,6 +24,7 @@ extern void m0_init(void);
 extern void m0_start(void);
 extern void m0_stop(void);
 extern void m0_wait_done(void);
+extern int m0_is_done(void);
 extern void m0_configure_execute_addr(uintptr_t addr);
 
 #endif /* M0_CTL_H */
